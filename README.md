@@ -19,6 +19,16 @@ Additionally, this [video](https://youtu.be/5g3vUm-XlyE) contains a summary of h
 
 <img src=https://github.com/akmayer/Warframe-Algo-Trader/assets/11152158/ef79875f-bfbb-435a-a248-e78d738ef059 width="495" height="270">
 
+## Related Ongoing Projects:
+
+This is not necessarily a recommendation or endorsement of these projects, but are something interesting you may want to check out related to this one.
+
+
+[QuantFrame](https://github.com/Kenya-DK/quantframe-react/tree/6e22637fb8878c060bc1f0e0228b91f33df456d2)
+- A port to TypeScript + Rust + Tauri rather than Python with the goal of making a downloadable program without all the configuration needed in this one.
+
+A WIP [installation script](https://github.com/MurasakinoNll/WFAT-setup/tree/main) for this project.
+- A batch file hoping to make downloading this program and some prerequisites more straightforward and less manual.
 
 ## How To Use
 
@@ -92,11 +102,19 @@ If you do not care about either notification system, you can proceed to [Running
 3. Clicking your phone will change the url to `https://www.pushbullet.com/#devices/<DEVICE_TOKEN>`. Copy this token and paste it into your config.json file with the key, "pushbullet_device_iden".
 4. Under the settings tab, click Create Access Token. Copy that token and paste it into your config.json file with the key, "pushbullet_token".
 
+#### Debugging Setup
+
+If you want to use the debug mode (Breakpoint in the python code):
+
+1. [Install Python Extension](https://marketplace.visualstudio.com/items?itemName=ms-python.python) for VSCode
+2. Run the debugger from the debugger tab.
+3. Navigate to the my-app folder from the command line and run npm run dev from the console window.
+
 ### Running
 
 #### Method A) Docker
 
-Running `docker compose up --build` will start two containers, one for the python app, running on port `8000` and the other running the web UI, running on port `3000`.
+Running `docker compose up` will start two containers, one for the python app, running on port `8000` and the other running the web UI, running on port `3000`.
 
 ![image](https://user-images.githubusercontent.com/23193271/254992499-82d408e6-0a4f-4dcf-909b-f95d31e268a6.png)
 
