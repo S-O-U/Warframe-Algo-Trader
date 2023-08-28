@@ -13,7 +13,11 @@ import logging
 import json
 import subprocess
 import io
+import time
 from fastapi.responses import StreamingResponse
+from AccessingWFMarket import *
+
+logging.basicConfig(format='{levelname:7} {message}', style='{', level=logging.DEBUG)
 
 
 f = open("config.json")
@@ -84,11 +88,10 @@ screenReaderProcess = None
 async def startup_event():
     import signal
     signal.signal(signal.SIGINT, receive_signal)
-    logger = logging.getLogger("uvicorn.access")
+    #logger = logging.getLogger("uvicorn.access")
     #handler = logging.StreamHandler()
     #handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     #logger.addHandler(handler)
-    #logging.basicConfig(format='{levelname:7} {message}', style='{', level=logging.DEBUG)
 
     config.setConfigStatus("runningWarframeScreenDetect", False)
     config.setConfigStatus("runningLiveScraper", False)
@@ -104,7 +107,6 @@ async def testLog():
     logging.error("Testing error.")
     #p.wait()
     #p.kill()
-    logging.info(f"Config testVar {config.testVar}.")
     return {}
 
 @app.get("/")
@@ -151,7 +153,7 @@ async def addItem(item : Item):
         con.close()
         aggregate_and_delete_rows_by_name(item.name)
         return {"Executed" : True}
-    if item.name and item.purchasePrice and item.number:
+    if item.name and item.number:
         cur.execute("INSERT INTO inventory (name, purchasePrice, number) VALUES(?,?,?)", [item.name, item.purchasePrice, item.number])
         con.commit()
         con.close()
@@ -184,7 +186,7 @@ async def updateItem(item : Item):
     cur = con.cursor()
     alreadyExists = cur.execute(f"SELECT COUNT(name) FROM inventory WHERE name='{item.name}'").fetchone()
     if alreadyExists[0] != 0:
-        if item.name and item.purchasePrice:
+        if item.name:
             cur.execute(f"UPDATE inventory SET purchasePrice=?, number=?, listedPrice=? WHERE name=?", [item.purchasePrice, item.number, item.listedPrice, item.name])
             con.commit()
             con.close()
@@ -214,7 +216,7 @@ async def sellItem(item : Item):
         con.close()
         return {"Executed" : False, "Reason": "Item not in database."}
 
-def get_order_id(item_name: str):
+def get_order_data(t : Transact):
     url = f"https://api.warframe.market/v1/profile/{config.inGameName}/orders"
 
     headers = {
@@ -230,32 +232,38 @@ def get_order_id(item_name: str):
 
     if response.status_code == 200:
         data = response.json()
-        sell_orders = data["payload"]["sell_orders"]
+        orders = data["payload"][f"{t.transaction_type}_orders"]
 
-        for order in sell_orders:
-            if order["item"]["url_name"] == item_name:
-                return order["id"]
+        for order in orders:
+            if order["item"]["url_name"] == t.name:
+                return order["id"], order['platinum'], order["quantity"]
 
         # If no matching order found
-        return None
+        return None, None, None
 
     # If API call failed
-    return None
+    return None, None, None
 
-@app.put("/market/{item_name}")
-def delete_order(item_name: str):
+@app.put("/market/delete")
+def delete_order(t : Transact):
     con = sqlite3.connect("inventory.db")
     cur = con.cursor()
-    numLeft = cur.execute(f"SELECT SUM(number) FROM inventory WHERE name='{item_name}'").fetchone()[0]
+    numLeft = cur.execute(f"SELECT SUM(number) FROM inventory WHERE name='{t.name}'").fetchone()[0]
     con.close()
     if numLeft != 1:
         return {"message": "Not deleting order since you have may of these left"}
     
     # Make the DELETE API call
-    order_id = get_order_id(item_name)  
+    order_id, order_plat, order_quant = get_order_data(t)
+
+    time.sleep(0.33)
     
     if order_id is None:
-        return {"message": "Order not found"}
+        raise HTTPException(
+            status_code=400,
+            detail=f'Something went getting the id of this order.',
+        )
+
     
     delete_url = f"https://api.warframe.market/v1/profile/orders/{order_id}"
     
@@ -274,9 +282,49 @@ def delete_order(item_name: str):
         return {"message": "Order deleted successfully"}
     else:
         raise HTTPException(
+            status_code=400,
+            detail=f'Something went wrong accessing wf.market api.',
+        )
+
+@app.put("/market/close")
+def close_order(t : Transact):
+    logging.error(t.name)
+    # Make the DELETE API call
+    order_id, order_plat, order_quant = get_order_data(t)
+
+    time.sleep(0.33)
+    
+    if order_id is None:
+        return {"message": "Order not found"}
+
+
+    if order_plat != t.price:
+        updateListing(order_id, t.price, order_quant, True, t.name, t.transaction_type)
+        time.sleep(0.33)
+
+
+    close_url = f"https://api.warframe.market/v1/profile/orders/close/{order_id}"
+    
+    headers = {
+            "Content-Type": "application/json; utf-8",
+            "Accept": "application/json",
+            "auth_type": "header",
+            "platform": config.platform,
+            "language": "en",
+            "Authorization": config.jwt_token,
+            'User-Agent': 'Warframe Algo Trader/1.2.8',
+        }
+    
+    response = requests.put(close_url, headers=headers, json={})
+    
+    if response.status_code == 200:
+        return {"message": "Order closed successfully"}
+    else:
+        raise HTTPException(
         status_code=400,
         detail=f'Something went wrong accessing wf.market api.',
     )
+
 
 @app.get("/transactions")
 async def get_transactions():
@@ -326,12 +374,16 @@ def create_transaction(t : Transact):
 
 @app.get("/live_scraper")
 def get_live_scraper_status():
-    return {"Running" : config.getConfigStatus("runningLiveScraper")}
+    global liveScraperProcess
+    if liveScraperProcess == None:
+        return {"Running" : False}
+    else:
+        return {"Running" : True}
 
 @app.post("/live_scraper/start")
 def start_live_scraper():
     global liveScraperProcess
-    if config.getConfigStatus("runningLiveScraper"):
+    if config.getConfigStatus("runningLiveScraper") or liveScraperProcess != None:
         return {"Executed" : False, "Reason" : "Scraper already running"}
     else:
         liveScraperProcess = subprocess.Popen(["python", "LiveScraper.py"])
@@ -347,7 +399,9 @@ def stop_live_scraper():
     if liveScraperProcess == None:
         return {"Executed" : False, "Reason" : "Scraper was not running."}
     config.setConfigStatus("runningLiveScraper", False)
+    liveScraperProcess.kill()
     liveScraperProcess.wait()
+    liveScraperProcess = None
     return {"Executed": True}
 
 @app.get("/stats_scraper")
